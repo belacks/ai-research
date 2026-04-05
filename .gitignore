@@ -1,0 +1,21 @@
+# Secrets & Credentials
+.env
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Data & Execution State (The Sandbox)
+shared_workspace/
+app/scheduler/last_run.json
+
+# OS & IDE specifics
+.DS_Store
+.vscode/
+.antigravity/
+
+keys/
+credentials/

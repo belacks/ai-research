@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claw_dashboard
+    command: streamlit run dashboard/Home.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "127.0.0.1:8501:8501"       # localhost-only — not exposed to the internet
+    volumes:
+      - ./shared_workspace:/app/shared_workspace
+    env_file:
+      - .env
+    restart: unless-stopped
+    # -- Security hardening --
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser/.streamlit    # Streamlit needs a writable config dir
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - claw_network
+
+  research-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claw_worker
+    command: python -m app.scheduler.cron_manager
+    volumes:
+      - ./shared_workspace:/app/shared_workspace
+      - ./app/scheduler:/app/app/scheduler
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    # -- Security hardening --
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser              # Playwright needs writable home for cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - claw_network
+
+networks:
+  claw_network:
+    driver: bridge

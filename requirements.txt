@@ -1,0 +1,6 @@
+markdown
+playwright
+python-dotenv
+schedule
+streamlit
+requests
