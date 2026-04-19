@@ -60,6 +60,9 @@ class Settings:
     # -- Stateful Scheduler --
     schedule_interval_hours: int
 
+    # -- User Profile --
+    researcher_profile: str
+
 
 def _load_settings() -> Settings:
     """
@@ -76,6 +79,10 @@ def _load_settings() -> Settings:
         ollama_base_url=_require_env("OLLAMA_BASE_URL"),
         target_model=_require_env("TARGET_MODEL"),
         schedule_interval_hours=int(_require_env("SCHEDULE_INTERVAL_HOURS")),
+        researcher_profile=os.getenv(
+            "RESEARCHER_PROFILE", 
+            "A technology researcher interested in AI, Data Science, and global tech trends."
+        ),
     )
 
     logger.info(

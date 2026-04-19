@@ -4,3 +4,6 @@ python-dotenv
 schedule
 streamlit
 requests
+python-telegram-bot[job-queue]
+trafilatura==1.12.0
+PyYAML==6.0.2

@@ -13,7 +13,7 @@ manual trigger mechanism for the research agent.
 import os
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -22,7 +22,7 @@ import streamlit as st
 # Page config — must be the first Streamlit call
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="OpenClaw · Command Center",
+    page_title="Ceros Research Command Center",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -36,6 +36,11 @@ _WORKSPACE_DIR = _PROJECT_ROOT / "shared_workspace"
 
 # Ensure the directory exists (first run / fresh clone)
 _WORKSPACE_DIR.mkdir(exist_ok=True)
+
+# Important: Streamlit runs from /app/dashboard, so /app is usually not in sys.path.
+import sys
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +260,18 @@ def _inject_css() -> None:
 # Data helpers
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=60)
+def _fetch_ollama_models() -> list[str]:
+    import requests
+    from app.core.config import settings
+    try:
+        resp = requests.get(f"{settings.ollama_base_url}/api/tags", timeout=5)
+        if resp.status_code == 200:
+            return [m.get("name") for m in resp.json().get("models", [])]
+    except Exception:
+        pass
+    return []
+
 def _get_md_files() -> list[tuple[Path, float]]:
     """
     Return a list of (path, mtime) tuples for every .md file in
@@ -273,9 +290,10 @@ def _get_md_files() -> list[tuple[Path, float]]:
 
 
 def _fmt_timestamp(epoch: float) -> str:
-    """Format an epoch timestamp into a human-readable UTC string."""
-    dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
-    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    """Format an epoch timestamp into a human-readable WIB string."""
+    wib = timezone(timedelta(hours=7), name="WIB")
+    dt = datetime.fromtimestamp(epoch, tz=wib)
+    return dt.strftime("%Y-%m-%d %H:%M:%S WIB")
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +304,7 @@ def _render_header() -> None:
     st.markdown(
         """
         <div class="cmd-header">
-            <h1>🔬 OpenClaw · Command Center</h1>
+            <h1>🔬 Ceros Research · Command Center</h1>
             <p class="subtitle">Autonomous Research Agent — Local Intelligence Node</p>
             <div style="margin-top: 0.75rem;">
                 <span class="status-pill">
@@ -379,15 +397,22 @@ def _render_mission_tab() -> None:
             unsafe_allow_html=True,
         )
 
+        from app.core.config import settings
+        default_model = settings.target_model
+        
+        models = _fetch_ollama_models()
+        if not models:
+            models = [default_model]
+        if default_model not in models:
+            models.append(default_model)
+        
+        selected_model = st.selectbox("LLM Engine", models, index=models.index(default_model))
+
         if st.button("🚀  Run Research Task Now", key="btn_trigger", use_container_width=True):
             trigger_path = _WORKSPACE_DIR / "trigger.txt"
             try:
-                subprocess.run(
-                    ["touch", str(trigger_path)],
-                    check=True,
-                    timeout=5,
-                )
-                st.toast("✅ Trigger signal sent — agent will pick it up shortly.", icon="🚀")
+                trigger_path.write_text(selected_model, encoding="utf-8")
+                st.toast(f"✅ Trigger signal sent (Model: {selected_model})", icon="🚀")
             except Exception as exc:
                 st.error(f"Failed to send trigger signal: {exc}")
 
@@ -408,7 +433,13 @@ def _render_mission_tab() -> None:
             import json
             try:
                 data = json.loads(last_run_file.read_text(encoding="utf-8"))
-                last_run_text = data.get("last_run_utc", "—")
+                last_run_utc = data.get("last_run_utc", "—")
+                if last_run_utc != "—":
+                    dt_utc = datetime.fromisoformat(last_run_utc)
+                    wib = timezone(timedelta(hours=7), name="WIB")
+                    last_run_text = dt_utc.astimezone(wib).strftime("%Y-%m-%d %H:%M:%S WIB")
+                else:
+                    last_run_text = "—"
             except Exception:
                 last_run_text = "corrupt"
         else:

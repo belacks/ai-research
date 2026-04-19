@@ -11,6 +11,7 @@ services:
       - "127.0.0.1:8501:8501"       # localhost-only — not exposed to the internet
     volumes:
       - ./shared_workspace:/app/shared_workspace
+      - ./targets.yaml:/app/targets.yaml:ro
     env_file:
       - .env
     restart: unless-stopped
@@ -31,10 +32,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: claw_worker
-    command: python -m app.scheduler.cron_manager
+    command: python -m app.agent.bot_handler
     volumes:
       - ./shared_workspace:/app/shared_workspace
       - ./app/scheduler:/app/app/scheduler
+      - ./targets.yaml:/app/targets.yaml:ro
     env_file:
       - .env
     extra_hosts:

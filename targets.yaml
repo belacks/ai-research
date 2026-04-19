@@ -1,0 +1,55 @@
+# CRN Target Sources
+# Add or remove sources here — no Python changes required.
+# scope: "global" | "local"
+# category: free-form label shown in Telegram notifications
+
+targets:
+  # Global sources
+  - url: "https://techcrunch.com"
+    category: "Tech News"
+    scope: "global"
+
+  - url: "https://news.ycombinator.com/"
+    category: "Hacker News"
+    scope: "global"
+
+  - url: "https://stackoverflow.blog"
+    category: "Engineering"
+    scope: "global"
+
+  - url: "https://huggingface.co/blog"
+    category: "AI Research"
+    scope: "global"
+
+  - url: "https://paperswithcode.com/latest"
+    category: "ML Papers"
+    scope: "global"
+
+  - url: "https://blog.pragmaticengineer.com/"
+    category: "Newsletter"
+    scope: "global"
+
+  - url: "https://www.mckinsey.com/featured-insights"
+    category: "Strategy"
+    scope: "global"
+
+  # Local (Indonesia / SEA) sources
+  - url: "https://e27.co/"
+    category: "SEA Tech News"
+    scope: "local"
+
+  - url: "https://www.detik.com/terpopuler"
+    category: "Indonesia News"
+    scope: "local"
+
+  - url: "https://www.detik.com/terpopuler/inet"
+    category: "Indonesia Tech"
+    scope: "local"
+
+  - url: "https://www.cnbcindonesia.com/tech"
+    category: "Indonesia Biz/Tech"
+    scope: "local"
+
+  - url: "https://news.dailysocial.id/"
+    category: "ID Startup News"
+    scope: "local"
