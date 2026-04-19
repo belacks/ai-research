@@ -27,6 +27,7 @@ The JSON object must contain exactly these fields:
   "summary": "<string: 3-4 sentence executive summary>",
   "key_insights": ["<string: insight 1>", "<string: insight 2>", "<string: insight 3>"],
   "relevance_tags": ["<from fixed set: {valid_tags}>"],
+  "relevance_score": <integer 1-10, where 10 = critically relevant to the researcher profile above>,
   "global_local": "<one of: global, local, both>",
   "action_for_researcher": "<string: one concrete implication for a Data Science student based in Indonesia>"
 }}
@@ -34,6 +35,7 @@ The JSON object must contain exactly these fields:
 RULES:
 - "key_insights" must have at most 3 items.
 - "relevance_tags" values MUST only come from this fixed set: {valid_tags}
+- "relevance_score" must be an integer between 1 and 10. Use the Researcher Profile to calibrate.
 - "global_local" must be exactly one of: "global", "local", "both"
 - Do NOT wrap the JSON in markdown code fences.
 - Do NOT add any text before or after the JSON object.

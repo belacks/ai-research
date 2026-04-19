@@ -15,6 +15,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 from app.core.config import settings
+from app.core.notifier import escape_html
 from app.agent.claw_logic import execute_research_agent
 from app.agent.prompts import TARGET_URLS
 
@@ -95,17 +96,18 @@ async def briefing_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     scope_arg = context.args[0].lower()
     
     if scope_arg == "local":
-        filtered_urls = [e["url"] for e in TARGET_URLS if e["scope"] == "local"]
+        filtered_entries = [e for e in TARGET_URLS if e["scope"] == "local"]
     elif scope_arg == "global":
-        filtered_urls = [e["url"] for e in TARGET_URLS if e["scope"] == "global"]
+        filtered_entries = [e for e in TARGET_URLS if e["scope"] == "global"]
     else:  # all
-        filtered_urls = [e["url"] for e in TARGET_URLS]
+        filtered_entries = list(TARGET_URLS)
         
     IS_CRAWLING = True
-    msg = await update.message.reply_text(f"🔍 Starting {scope_arg} briefing — {len(filtered_urls)} sources queued.")
+    msg = await update.message.reply_text(f"🔍 Starting {scope_arg} briefing — {len(filtered_entries)} sources queued.")
     
     try:
-        await asyncio.to_thread(execute_research_agent, custom_urls=filtered_urls)
+        trigger_value = f"briefing_{scope_arg}"
+        await asyncio.to_thread(execute_research_agent, trigger_value, None, None, filtered_entries)
         _write_last_run()
         await msg.edit_text(f"✅ {scope_arg.capitalize()} briefing finished safely in the background.")
     except Exception as exc:
@@ -154,7 +156,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         try:
             # We use to_thread to offload the heavy synchronous web-crawling off the PTB async loop
-            await asyncio.to_thread(execute_research_agent, model_override=None)
+            await asyncio.to_thread(execute_research_agent, "manual", None)
             _write_last_run()
             await query.edit_message_text(text="✅ Deep Crawl Module finished safely in the background.")
         except Exception as exc:
@@ -190,7 +192,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     msg = await update.message.reply_text("⏳ Spacing up Deep Crawl module for custom URLs. This might take a few minutes...")
 
     try:
-        await asyncio.to_thread(execute_research_agent, model_override=None, custom_urls=urls)
+        await asyncio.to_thread(execute_research_agent, "custom", None, urls)
         _write_last_run()
         await msg.edit_text("✅ Custom Deep Crawl Module finished safely in the background.")
     except Exception as exc:
@@ -227,7 +229,7 @@ async def check_trigger_file(context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat_id=settings.telegram_chat_id,
                 text=f"🚀 Manual Command Center trigger consumed. Starting Engine (Model: {model_override or settings.target_model})."
             )
-            await asyncio.to_thread(execute_research_agent, model_override=model_override)
+            await asyncio.to_thread(execute_research_agent, "manual", model_override)
             _write_last_run()
         except Exception as exc:
             logger.error(exc)

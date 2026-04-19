@@ -207,6 +207,7 @@ _FALLBACK_TEMPLATE = {
     "summary": "",
     "key_insights": [],
     "relevance_tags": [],
+    "relevance_score": 5,
     "global_local": "global",
     "action_for_researcher": "",
 }
@@ -296,7 +297,12 @@ def is_eligible(parsed: dict, raw_text: str) -> tuple[bool, str]:
 # 3. Orchestrator
 # ---------------------------------------------------------------------------
 
-def execute_research_agent(model_override: str = None, custom_urls: list[str] = None) -> None:
+def execute_research_agent(
+    trigger: str = "scheduled",
+    model_override: str = None,
+    custom_urls: list[str] = None,
+    target_entries: list[dict] = None,
+) -> None:
     """
     Full research cycle:
       1. Crawl the target URL.
@@ -316,17 +322,18 @@ def execute_research_agent(model_override: str = None, custom_urls: list[str] = 
     sent_count = 0
 
     # DB: create a run record
-    trigger_type = "custom" if custom_urls else "scheduled"
     model_used = model_override if model_override else settings.target_model
-    run_id = insert_run(trigger=trigger_type, model_used=model_used)
+    run_id = insert_run(trigger=trigger, model_used=model_used)
 
-    # Build target list: custom URLs as plain dicts or structured TARGET_URLS
-    if custom_urls:
-        target_entries = [{"url": u, "category": "Custom", "scope": "global"} for u in custom_urls]
+    # Build target list: pre-filtered entries > custom URL stubs > default TARGET_URLS
+    if target_entries:
+        entries = target_entries
+    elif custom_urls:
+        entries = [{"url": u, "category": "Custom", "scope": "global"} for u in custom_urls]
     else:
-        target_entries = TARGET_URLS
+        entries = TARGET_URLS
 
-    for entry in target_entries:
+    for entry in entries:
         url = entry["url"]
         category = entry["category"]
         scope = entry["scope"]
