@@ -1,127 +1,123 @@
-# CRN — Crawl Research Node
+# 🚀 Crawl Research Node (CRN)
+> **Lightweight Autonomous Research & Executive Intelligence Agent**  
+> *Built from First Principles — Zero AutoGen / CrewAI / LangChain dependencies. Pure Python, Resource-Controlled, Local + Cloud LLM Hybrid.*
 
-*Lightweight autonomous research agent built from scratch on Ollama + Docker + Telegram*
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Docker Containerized](https://img.shields.io/badge/docker-containerized-blue.svg)](https://www.docker.com/)
+[![Guidebook](https://img.shields.io/badge/Documentation-Complete%20Guidebook-purple.svg)](GUIDEBOOK.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-000000?logo=ollama&logoColor=white)
+---
 
-## What Is This?
+## 📌 What is CRN?
 
-CRN is a self-hosted, hardware-local AI research agent. It crawls a configurable list of web sources on a schedule, summarizes each page through a local LLM running on Ollama, and delivers structured intelligence briefings directly to your Telegram. Everything runs on your own machine — no API keys to OpenAI, no cloud compute bills, no data leaving your network.
+**Crawl Research Node (CRN)** is a lightweight, autonomous intelligence assistant designed to operate as a 24/7 executive AI chief of staff. 
 
-The entire system is built from scratch without AutoGen, CrewAI, LangChain, or any agentic framework. Every component is explicit Python: a Playwright crawler, a Trafilatura cleaner, a raw HTTP call to Ollama, a JSON parser, a SQLite writer, and a Telegram bot. This is intentional. On consumer hardware (laptops, mini PCs), resource control matters more than abstraction convenience.
+It continuously monitors live tech headlines, crawls career opportunities, evaluates candidate-job fit using LLMs, manages financial transactions via pluggable bank adapters, and provides instant RAG knowledge search over your personal research vault.
 
-## Architecture
+CRN is engineered from **First Principles**:
+* **Explicit Python Architecture:** Zero black-box framework abstractions or loop deadlocks.
+* **Dual-Brain Intelligence Cascade:** Combines local Ollama SLMs (`gemma4:e4b`, `qwen2.5-coder`) for fast local tasks with Cloud Gemini 3.x Flash/Pro for complex reasoning.
+* **Deterministic Resource Control:** Low-memory Docker footprint, sliding-window rate limiters, and hybrid SQLite FTS5 + Vector indexing.
 
-```
-targets.yaml → Playwright Crawler → Trafilatura Cleaner
-                                          ↓
-                              Ollama (host, any model)
-                                          ↓
-                           JSON Parser + Eligibility Gate
-                                          ↓
-                    SQLite DB ←→ Telegram Bot + Streamlit Dashboard
-```
+---
 
-| Component | Role |
-|-----------|------|
-| Playwright | Headless Chromium browser for JavaScript-rendered page extraction |
-| Trafilatura | DOM cleaning — strips navigation, sidebars, and boilerplate to isolate article text |
-| Ollama | Local LLM inference server running on the host machine |
-| python-telegram-bot | Bidirectional Telegram interface with inline keyboards and command routing |
-| SQLite | Structured storage for every crawl result, enabling pattern queries and historical analysis |
-| Streamlit | Dashboard UI for triggering crawls and viewing briefing history |
-| Docker Compose | Two-container deployment with security hardening (non-root, read-only filesystem) |
+## 🏛 High-Level Architecture
 
-## Features
+```mermaid
+graph TD
+    User["📱 User (Telegram / Web Dashboard)"] --> Router["🎯 Universal 2-Tier Intent Router"]
+    
+    subgraph Core Agent Engine
+        Router --> Dispatcher["⚙️ Task Dispatcher"]
+        Dispatcher --> JobEngine["💼 Job Intelligence Engine"]
+        Dispatcher --> FinEngine["💳 Pluggable Finance Engine"]
+        Dispatcher --> RAGEngine["🧠 Dual-Brain RAG Engine"]
+        Dispatcher --> NewsEngine["📰 Live Sentiment Crawler"]
+    end
 
-CRN crawls multiple sources per cycle with scope-aware filtering — sources are tagged as `global` (international tech, AI research, strategy) or `local` (Indonesia, Southeast Asia) and users can run targeted briefings via Telegram commands like `/briefing local`. Each source is routed to a domain-specific LLM persona: a Senior Engineering Lead for tech sites, a Quantitative Analyst for finance sources, an AI Research Scientist for papers, and so on. The LLM is instructed to return a strict JSON schema containing a title, executive summary, up to three key insights, relevance tags from a fixed taxonomy, a relevance score calibrated against the user's personal researcher profile, and a concrete action item. That profile is defined in `.env` — a plain-text description of your background, thesis topic, and career interests — so relevance scoring is personalized, not generic.
+    subgraph Dual-Brain Intelligence Cascade
+        JobEngine & FinEngine & RAGEngine & NewsEngine --> Cascade["🔀 6-Tier Cascade Controller"]
+        Cascade -->|Tier 1| Ollama["💻 Local Ollama (SLM)"]
+        Cascade -->|Tier 2| Gemini["☁️ Cloud Gemini 3.x (Flash / Pro)"]
+    end
 
-Every crawl result is persisted to a SQLite database with full metadata: URL, category, scope, structured fields, raw character count, and whether the item passed the eligibility gate and was actually sent to Telegram. The eligibility gate is deterministic — it checks extraction quality and parse success, not subjective LLM scoring. Failed or low-quality extractions are stored but silently skipped for notification. The entire system runs inside Docker Compose with production security hardening: containers run as a non-root user, the filesystem is mounted read-only, all Linux capabilities are dropped, and privilege escalation is blocked.
-
-## Quick Start
-
-1. **Prerequisites**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and [Ollama](https://ollama.com/). Create a Telegram bot via [@BotFather](https://t.me/BotFather) and note the token.
-
-2. **Clone the repository**:
-   ```bash
-   git clone https://github.com/belacks/ai-research.git
-   cd ai-research
-   ```
-
-3. **Pull a model** (any Ollama-compatible model works):
-   ```bash
-   ollama pull qwen3:2b
-   ```
-
-4. **Copy and fill the config**:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` with your Telegram bot token, chat ID, and preferred model name.
-
-5. **Add or remove sources**: Edit `targets.yaml` to configure which sites CRN crawls. No Python changes required.
-
-6. **Run**:
-   ```bash
-   docker compose up --build -d
-   ```
-   Send `/menu` to your Telegram bot to verify it's online.
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Yes | Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Yes | Your Telegram user/group chat ID |
-| `OLLAMA_BASE_URL` | Yes | Ollama API endpoint (default: `http://host.docker.internal:11434`) |
-| `TARGET_MODEL` | Yes | Ollama model name (must be pulled locally, e.g. `qwen3:2b`) |
-| `SCHEDULE_INTERVAL_HOURS` | Yes | Hours between scheduled crawl reminders |
-| `RESEARCHER_PROFILE` | No | Your background description for personalized relevance scoring. Default: `"A technology researcher interested in AI, Data Science, and global tech trends."` |
-
-### Source Configuration (targets.yaml)
-
-Sources are defined in `targets.yaml` at the project root. Each entry has three fields:
-
-```yaml
-targets:
-  - url: "https://huggingface.co/blog"
-    category: "AI Research"
-    scope: "global"
+    subgraph Persistence & Sandbox
+        FinEngine & JobEngine & RAGEngine & NewsEngine --> DB[("💾 SQLite + Vector Storage")]
+    end
 ```
 
-- `url` — the page to crawl
-- `category` — free-form label displayed in Telegram notifications
-- `scope` — either `"global"` or `"local"`. Used by `/briefing local` and `/briefing global` to filter sources
+---
 
-The file is mounted as a read-only volume inside the container. Changes take effect on the next crawl cycle without rebuilding the image.
+## ✨ Key Capabilities
 
-## Telegram Commands
+| Module | Core Functionality |
+| :--- | :--- |
+| **🔀 LLM Cascade Controller** | 6-tier fallback mechanism routing between local Ollama SLMs and Cloud Gemini 3.x. |
+| **🔍 Dual-Brain RAG Memory** | Hybrid SQLite FTS5 lexical matching + 3072-dim Vector Cosine Similarity (`gemini-embedding-001`). |
+| **💼 Job Intelligence Engine** | Async Playwright crawling, LLM candidate fit scoring (0–100%), 3-bullet pitch generation, and PDF report export. |
+| **💳 Pluggable Finance Engine** | Net liquid position calculation, IMAP bank email transaction parsing, and local plugin extension support. |
+| **📰 Live News & Coffee Digest** | Automated headline sentiment scoring (`indo-roBERTa-financial-sentiment-v2`) and bilingual Telegram briefings. |
 
-| Command | Description |
-|---------|-------------|
-| `/menu` | Open the interactive control panel with inline keyboard buttons |
-| `/briefing local` | Run a crawl cycle on local (Indonesia/SEA) sources only |
-| `/briefing global` | Run a crawl cycle on global (international) sources only |
-| `/briefing all` | Run a full crawl cycle on all configured sources |
+---
 
-## Roadmap
+## 🚀 Quickstart Guide
 
-- [x] Trafilatura DOM cleaning
-- [x] Structured JSON output with researcher profile
-- [x] SQLite intelligence database
-- [x] Scope-filtered Telegram commands
-- [ ] Async concurrent crawling (asyncio.gather)
-- [ ] RAG / vector memory across past briefings
-- [ ] Trading signal agent (MT5 integration)
+### 1. Clone Repository & Setup Environment
+```bash
+git clone https://github.com/belacks/ai-research.git
+cd ai-research
+cp .env.example .env
+```
 
-## Why Not AutoGen / CrewAI?
+### 2. Configure Credentials
+Fill in your tokens inside `.env`:
+```env
+TELEGRAM_BOT_TOKEN="your-bot-token"
+TELEGRAM_CHAT_ID="your-chat-id"
+GEMINI_API_KEY="your-gemini-api-key"
+```
 
-Those frameworks are powerful but heavy — they abstract away the parts that matter most for learning and for resource-constrained hardware. CRN is intentionally minimal. There is no agent orchestration layer, no tool-calling abstraction, no prompt chaining middleware. Every component is a plain Python function with explicit inputs and outputs. If the crawler breaks, you read the crawler. If the LLM prompt needs tuning, you edit the prompt string. On a laptop running a 2B parameter model on CPU, that level of control is not optional — it is the architecture.
+### 3. Customize Candidate Profile
+```bash
+cp shared_workspace/user_profile.txt.example shared_workspace/user_profile.txt
+```
+Edit `shared_workspace/user_profile.txt` with your resume baseline. *(Git-ignored for privacy).*
 
-## License
+### 4. Launch via Docker
+```bash
+docker-compose up -d --build
+```
+Check logs: `docker logs -f claw_worker` (`Listener online and Polling active`).
 
-[MIT](LICENSE)
+---
+
+## 📱 Telegram Interaction Examples
+
+* `do job scan` $\rightarrow$ Triggers autonomous crawler across target job boards.
+* `/jobs` $\rightarrow$ Displays top matching opportunities with tailored talking points.
+* `/finance` $\rightarrow$ Displays net liquid position, daily burn rate, and liabilities.
+* `can I afford 60k for snacks?` $\rightarrow$ Evaluates spending decision against budget.
+* `/digest` $\rightarrow$ Generates bilingual Morning Coffee Digest.
+* `/ask [query]` $\rightarrow$ RAG search over personal vault and web research.
+
+---
+
+## 📘 Comprehensive Documentation
+
+For complete technical documentation, plugin creation guides, bank parser adapter specifications, and architecture details, refer to the **[CRN Complete Technical Guidebook](GUIDEBOOK.md)**.
+
+---
+
+## 🧪 Regression Testing
+
+Run the 21-step automated feature test suite inside Docker:
+```bash
+docker exec claw_worker python3 /app/shared_workspace/test_crn_pipeline.py
+```
+
+---
+
+## 📄 License
+
+Distributed under the [MIT License](LICENSE).

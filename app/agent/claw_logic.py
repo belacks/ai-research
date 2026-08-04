@@ -12,6 +12,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
+import asyncio
+from playwright.async_api import async_playwright
 from playwright.sync_api import sync_playwright
 import trafilatura
 
@@ -36,84 +38,115 @@ _CRAWL_TIMEOUT_MS = 30_000          # 30 s — increased for heavy pages
 _OLLAMA_CONNECT_TIMEOUT = 10        # fail fast if Ollama is unreachable
 _OLLAMA_REQUEST_TIMEOUT = 900       # 15 min — >10mins for think mode on CPU
 _MIN_ELIGIBLE_CHARS = 20            # Summary must have at least this many chars to be eligible
+_CONCURRENT_CRAWL_LIMIT = 3         # Concurrent Playwright browser instances
 
 
 # ---------------------------------------------------------------------------
-# 1. Web Crawling (Playwright)
+# 1. Web Crawling (Async Playwright + Semaphore)
 # ---------------------------------------------------------------------------
+
+async def crawl_and_extract_async(url: str, semaphore: asyncio.Semaphore) -> str:
+    """
+    Navigate to *url* using Playwright async_api with concurrency control via *semaphore*.
+    Uses trafilatura to strip navigation, sidebars, and boilerplate.
+    Falls back to inner_text if trafilatura returns None.
+    """
+    async with semaphore:
+        logger.info("Async Crawling (Semaphore active) → %s", url)
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto(url, wait_until="domcontentloaded", timeout=_CRAWL_TIMEOUT_MS)
+
+                page_html = await page.content()
+                text = trafilatura.extract(page_html)
+
+                if not text:
+                    logger.info("Trafilatura returned None for %s, falling back to inner_text.", url)
+                    text = await page.inner_text("body")
+
+                await browser.close()
+                extracted_str = text or ""
+                logger.info("Extracted %d characters from %s", len(extracted_str), url)
+                return extracted_str
+        except Exception as exc:
+            logger.error("Async Crawl failed for %s: %s", url, exc)
+            return ""
+
 
 def crawl_and_extract(url: str) -> str:
-    """
-    Navigate to *url* in headless Chromium and return clean article text.
-
-    Uses trafilatura to strip navigation, sidebars, and boilerplate.
-    Falls back silently to ``page.inner_text("body")`` if trafilatura
-    returns ``None``.
-
-    Returns an empty string on any failure (timeout, crash, etc.).
-    The browser is always closed in a ``finally`` block.
-    """
-    logger.info("Crawling → %s", url)
-    playwright = None
-    browser = None
-
+    """Synchronous wrapper around crawl_and_extract_async for single-target calls."""
     try:
-        playwright = sync_playwright().start()
-        browser = playwright.chromium.launch(headless=True)
-        page = browser.new_page()
-
-        page.goto(url, wait_until="domcontentloaded", timeout=_CRAWL_TIMEOUT_MS)
-
-        # Attempt clean extraction via trafilatura on full HTML
-        page_html = page.content()
-        text = trafilatura.extract(page_html)
-
-        # Silent fallback: if trafilatura finds no article, use raw body text
-        if not text:
-            logger.info("Trafilatura returned None for %s, falling back to inner_text.", url)
-            text = page.inner_text("body")
-
-        logger.info("Extracted %d characters from %s", len(text), url)
-        return text
-
+        return asyncio.run(crawl_and_extract_async(url, asyncio.Semaphore(1)))
     except Exception as exc:
-        logger.error("Crawl failed for %s: %s", url, exc)
+        logger.error("Synchronous crawl fallback failed for %s: %s", url, exc)
         return ""
 
-    finally:
-        if browser:
-            browser.close()
-        if playwright:
-            playwright.stop()
-
 
 # ---------------------------------------------------------------------------
-# 2. Local LLM Reasoning (Ollama)
+# 2. LLM Reasoning (Gemini Cloud API & Local Ollama Fallback Cascade)
 # ---------------------------------------------------------------------------
 
-def summarize_with_ollama(text: str, url: str, model_override: str = None) -> str:
-    """
-    Send *text* to the local Ollama instance and return a Markdown summary.
-    Uses dynamic prompts tailored to the specific *url* source.
+def summarize_with_gemini(
+    text: str,
+    url: str,
+    model_name: str = "gemini-3.5-flash-lite",
+    lens: str = "executive",
+    custom_query: str = ""
+) -> str:
+    """Send *text* to Google AI Studio Gemini API and return raw response text."""
+    if not settings.gemini_api_key:
+        raise ValueError("GEMINI_API_KEY is not configured.")
 
-    Uses streaming mode so we can log progress while the model generates.
-    Returns a fallback error string if the LLM is unreachable or fails.
-    """
+    from google import genai
+    if url in ["raw_prompt", "daily_digest"] or url.startswith("raw_"):
+        prompt = text
+    else:
+        prompt = get_prompt_for_url(url, text, settings.researcher_profile, lens=lens, custom_query=custom_query)
+    
+    logger.info("Requesting cloud summary from Gemini API (model: %s, lens: %s) …", model_name, lens)
+    client = genai.Client(api_key=settings.gemini_api_key)
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+    )
+    
+    result = response.text.strip() if response.text else ""
+    if not result:
+        raise ValueError(f"Gemini API ({model_name}) returned an empty response.")
+    
+    logger.info("Gemini summary received (%d chars) via %s.", len(result), model_name)
+    return result
+
+
+def summarize_with_ollama(
+    text: str,
+    url: str,
+    model_override: str = None,
+    lens: str = "executive",
+    custom_query: str = ""
+) -> str:
+    """Send *text* to local Ollama instance and return summary using selected Analytical Lens."""
     import time as _time
 
     target_model = model_override if model_override else settings.target_model
-    prompt = get_prompt_for_url(url, text, settings.researcher_profile)
+    if url in ["raw_prompt", "daily_digest"] or url.startswith("raw_"):
+        prompt = text
+    else:
+        prompt = get_prompt_for_url(url, text, settings.researcher_profile, lens=lens, custom_query=custom_query)
+
     payload = {
         "model": target_model,
         "prompt": prompt,
         "stream": True,
-        "think": False,         # disable reasoning — CPU is too slow for CoT on large multi-url texts
+        "think": False,
     }
 
     api_url = f"{settings.ollama_base_url}/api/generate"
     logger.info(
-        "Requesting summary from %s (model: %s, timeout: %ds)",
-        api_url, target_model, _OLLAMA_REQUEST_TIMEOUT,
+        "Requesting summary from %s (model: %s, lens: %s)",
+        api_url, target_model, lens,
     )
 
     try:
@@ -124,52 +157,36 @@ def summarize_with_ollama(text: str, url: str, model_override: str = None) -> st
         )
         resp.raise_for_status()
 
-        # Stream tokens and log progress periodically.
-        # NOTE: qwen3.5 is a thinking/reasoning model — it emits tokens in
-        # the "thinking" field first, then "response". We track both.
-        chunks: list[str] = []
-        token_count = 0
+        chunks = []
         thinking_count = 0
-        phase = "loading"
-        start_time = _time.monotonic()
-        last_log = start_time
+        token_count = 0
+        start_t = _time.time()
 
-        for line in resp.iter_lines(decode_unicode=True):
+        for line in resp.iter_lines():
             if not line:
                 continue
-            import json as _json
-            data = _json.loads(line)
+            data = json.loads(line.decode("utf-8"))
+            chunk = data.get("response", "")
 
-            # Thinking tokens (reasoning phase)
-            thinking_token = data.get("thinking", "")
-            if thinking_token:
+            if "<think>" in chunk or thinking_count > 0:
                 thinking_count += 1
-                if phase != "thinking":
-                    phase = "thinking"
-                    logger.info("🧠 LLM entered thinking/reasoning phase …")
+                if "</think>" in chunk:
+                    thinking_count = 0
+                continue
 
-            # Response tokens (output phase)
-            token = data.get("response", "")
-            if token:
-                chunks.append(token)
-                token_count += 1
-                if phase != "responding":
-                    phase = "responding"
-                    logger.info("✍️  LLM now generating response …")
+            chunks.append(chunk)
+            token_count += 1
 
-            # Progress log every 10 seconds
-            now = _time.monotonic()
-            elapsed = now - start_time
-            if now - last_log >= 10:
+            if token_count % 50 == 0:
+                elapsed = _time.time() - start_t
+                tok_s = token_count / elapsed if elapsed > 0 else 0
                 logger.info(
-                    "⏳ LLM %s … thinking=%d  response=%d tokens (%.0fs elapsed)",
-                    phase, thinking_count, token_count, elapsed,
+                    "Ollama generating … %d tokens (%.1f tok/s)",
+                    token_count, tok_s,
                 )
-                last_log = now
 
-            # Ollama sends {"done": true} on the final chunk
-            if data.get("done"):
-                total_dur = data.get("total_duration", 0) / 1e9  # ns → s
+            if data.get("done", False):
+                total_dur = data.get("total_duration", 0) / 1e9
                 eval_count = data.get("eval_count", token_count)
                 logger.info(
                     "✅ LLM finished — %d thinking + %d response tokens in %.1fs",
@@ -198,18 +215,56 @@ def summarize_with_ollama(text: str, url: str, model_override: str = None) -> st
         return f"_⚠️ LLM error: {exc}_"
 
 
+def summarize_with_cascade(
+    text: str,
+    url: str,
+    model_override: str = None,
+    lens: str = "executive",
+    custom_query: str = ""
+) -> str:
+    """Execute model cascade supporting Analytical Lens choice."""
+    default_cascade = [
+        ("gemini", "gemini-3.5-flash-lite"),
+        ("gemini", "gemini-3.5-flash"),
+        ("gemini", "gemini-3.6-flash"),
+        ("gemini", "gemma-4-31b-it"),
+        ("gemini", "gemma-4-26b-a4b-it"),
+        ("ollama", None),
+    ]
+
+    if model_override and model_override != "auto":
+        if model_override == "ollama":
+            cascade = [("ollama", None)]
+        else:
+            cascade = [("gemini", model_override)] + [m for m in default_cascade if m[1] != model_override]
+    else:
+        cascade = default_cascade
+
+    for backend, model_name in cascade:
+        try:
+            if backend == "gemini":
+                logger.info("Attempting cascade step: Gemini (%s)...", model_name)
+                return summarize_with_gemini(text, url, model_name=model_name, lens=lens, custom_query=custom_query)
+            elif backend == "ollama":
+                logger.info("Attempting cascade step: Local Ollama...")
+                return summarize_with_ollama(text, url, model_override=model_override, lens=lens, custom_query=custom_query)
+        except Exception as exc:
+            logger.warning("Cascade step failed (%s / %s): %s. Falling to next model.", backend, model_name, exc)
+            continue
+
+    return "_⚠️ All LLM cascade models failed to synthesize response._"
+
+
 # ---------------------------------------------------------------------------
 # 2b. JSON Response Parser
 # ---------------------------------------------------------------------------
 
 _FALLBACK_TEMPLATE = {
     "title": "",
-    "summary": "",
-    "key_insights": [],
+    "one_line_brief": "",
     "relevance_tags": [],
     "relevance_score": 5,
     "global_local": "global",
-    "action_for_researcher": "",
 }
 
 
@@ -235,46 +290,45 @@ def parse_llm_json_response(raw: str) -> dict:
     except json.JSONDecodeError:
         logger.warning("LLM response is not valid JSON. Using fallback dict.")
         fallback = copy.deepcopy(_FALLBACK_TEMPLATE)
-        fallback["summary"] = raw
+        fallback["one_line_brief"] = raw
         return fallback
 
 
-def format_telegram_message(parsed: dict, url: str, category: str, scope: str) -> str:
+def format_telegram_message(parsed: dict, url: str, category: str, scope: str, lens: str = "executive") -> str:
     """
-    Render a parsed structured dict into a rich Telegram HTML message.
-    Gracefully handles missing fields by falling back to empty defaults.
+    Render a parsed structured dict into a rich, substantive Telegram HTML message.
+    Includes the detailed analytical_insight section generated for the selected Analytical Lens.
     """
     title = parsed.get("title", "")
-    summary = parsed.get("summary", "")
-    insights = parsed.get("key_insights", [])
+    brief = parsed.get("one_line_brief", "")
+    insight = parsed.get("analytical_insight", "")
     tags = parsed.get("relevance_tags", [])
+    score = parsed.get("relevance_score", 5)
     gl = parsed.get("global_local", scope)
-    action = parsed.get("action_for_researcher", "")
 
-    scope_icon = {"global": "\U0001f30d", "local": "\U0001f1ee\U0001f1e9", "both": "\U0001f310"}.get(gl, "\U0001f30d")
+    scope_icon = {"global": "🌍", "local": "🇮🇩", "both": "🌐"}.get(gl, "🌍")
+    tags_str = " ".join(f"#{t.replace(' ', '')}" for t in tags) if tags else f"#{category}"
 
-    parts = [f"<b>\U0001f52c Ceros Research Briefing</b>"]
+    lens_headers = {
+        "executive": "🎯 Executive Insight",
+        "technical": "📊 Technical & Architecture Breakdown",
+        "risk": "⚠️ Risk & Vulnerability Audit",
+        "custom": "💬 Custom Query Breakdown"
+    }
+    header_text = lens_headers.get(lens, "💡 Analytical Breakdown")
 
-    if title:
-        parts.append(f"\n\U0001f4f0 <b>{escape_html(title)}</b>")
+    parts = [
+        f"{scope_icon} <b>{escape_html(category)} Briefing</b> — <code>[{gl.upper()}]</code>",
+        f"<b><a href=\"{url}\">{escape_html(title)}</a></b>" if title else "",
+        f"🎯 <b>Brief:</b> {escape_html(brief)}" if brief else "",
+    ]
 
-    tag_line = " \u2022 ".join(escape_html(t) for t in tags[:5]) if tags else category
-    parts.append(f"\U0001f3f7\ufe0f {tag_line}  |  {scope_icon} {gl.capitalize()}")
+    if insight:
+        parts.append(f"<b>{header_text}:</b>\n{escape_html(insight)}")
 
-    if summary:
-        parts.append(f"\n{escape_html(summary)}")
+    parts.append(f"📊 <b>Relevance:</b> {score}/10 | {escape_html(tags_str)}")
 
-    if insights:
-        parts.append("\n\U0001f4a1 <b>Key Insights:</b>")
-        for insight in insights[:3]:
-            parts.append(f"\u2022 {escape_html(insight)}")
-
-    if action:
-        parts.append(f"\n\U0001f3af <b>Action:</b> {escape_html(action)}")
-
-    parts.append(f"\n<code>{escape_html(url)}</code>  |  {escape_html(category)}")
-
-    return "\n".join(parts)
+    return "\n\n".join(p for p in parts if p)
 
 
 def is_eligible(parsed: dict, raw_text: str) -> tuple[bool, str]:
@@ -282,13 +336,12 @@ def is_eligible(parsed: dict, raw_text: str) -> tuple[bool, str]:
     if len(raw_text) < _MIN_ELIGIBLE_CHARS:
         return False, "raw text too short"
         
-    summary = parsed.get("summary", "")
-    if not summary or summary.startswith("_⚠️"):
-        return False, "LLM error in summary"
+    brief = parsed.get("one_line_brief", "")
+    if not brief or brief.startswith("_\u26a0\ufe0f"):
+        return False, "LLM error in one_line_brief"
         
     title = parsed.get("title", "")
-    insights = parsed.get("key_insights", [])
-    if not title and not insights:
+    if not title and not brief:
         return False, "JSON parse failed (fallback dict)"
         
     return True, "ok"
@@ -302,16 +355,18 @@ def execute_research_agent(
     model_override: str = None,
     custom_urls: list[str] = None,
     target_entries: list[dict] = None,
+    lens: str = "executive",
+    custom_query: str = "",
 ) -> None:
     """
     Full research cycle:
       1. Crawl the target URL.
-      2. Summarise with the local LLM.
+      2. Summarise with local/cloud LLM using selected Analytical Lens.
       3. Write a timestamped briefing to shared_workspace/.
       4. Push a Telegram notification.
-      5. Consume the manual trigger file if it exists.
+      5. Consume manual trigger file if it exists.
     """
-    logger.info("--- Research Agent cycle start ---")
+    logger.info("--- Research Agent cycle start (lens: %s) ---", lens)
     if model_override:
         logger.info("Using target model override: %s", model_override)
 
@@ -343,25 +398,40 @@ def execute_research_agent(
             # 1. Crawl
             raw_text = crawl_and_extract(url)
             if not raw_text:
-                logger.warning("Crawl returned no data for %s. Skipping.", url)
+                logger.warning("Crawl returned no data for %s. Recording failure.", url)
+                failed_parsed = {"title": "", "one_line_brief": "", "relevance_tags": [],
+                                 "relevance_score": 0, "global_local": scope}
+                aggregated_summaries.append({
+                    "url": url, "category": category, "scope": scope,
+                    "parsed": failed_parsed, "summary": "",
+                    "raw_char_count": 0, "was_notified": False,
+                })
+                if run_id != -1:
+                    insert_item(run_id, aggregated_summaries[-1])
                 continue
 
-            # Limit text input massive to save CPU reasoning time and LLM Context Window
+            # Limit text input to save reasoning time and LLM Context Window
             raw_text = raw_text[:4000]
 
-            # 2. Summarise
-            summary_raw = summarize_with_ollama(raw_text, url, model_override=model_override)
+            # 2. Summarise with cascade supporting Analytical Lens choice
+            summary_raw = summarize_with_cascade(
+                raw_text, url, model_override=model_override, lens=lens, custom_query=custom_query
+            )
 
             # 3. Parse structured JSON from LLM output
             parsed = parse_llm_json_response(summary_raw)
             
             # Store parsed data, URL, category, and scope for briefing & notification
+            brief_text = parsed.get("one_line_brief", "")
+            insight_text = parsed.get("analytical_insight", "")
+            full_summary_str = f"{brief_text}\n\n{insight_text}".strip() if insight_text else brief_text
+
             aggregated_summaries.append({
                 "url": url,
                 "category": category,
                 "scope": scope,
                 "parsed": parsed,
-                "summary": parsed.get("summary", summary_raw),
+                "summary": full_summary_str if full_summary_str else summary_raw,
                 "raw_char_count": len(raw_text),
             })
 
@@ -371,8 +441,8 @@ def execute_research_agent(
             if not eligible:
                 logger.warning("Ineligible %s — %s. Skipping Telegram notification.", url, reason)
             else:
-                # 4. Notify IMMEDIATELY via Telegram (prevents "message too long" API error)
-                tg_msg = format_telegram_message(parsed, url, category, scope)
+                # 4. Notify IMMEDIATELY via Telegram with Analytical Lens Breakdown
+                tg_msg = format_telegram_message(parsed, url, category, scope, lens=lens)
                 send_telegram_alert(tg_msg)
                 was_notified = True
                 sent_count += 1
@@ -393,20 +463,36 @@ def execute_research_agent(
         _consume_trigger()
         return
 
-    # 3. Write briefing (Markdown for the dashboard)
+    # 3. Write briefing (Markdown for dashboard & Obsidian vault)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    briefing_path = _WORKSPACE_DIR / f"briefing_{ts}.md"
+    briefing_filename = f"briefing_{ts}.md"
+    briefing_path = _WORKSPACE_DIR / briefing_filename
     
     wib = timezone(timedelta(hours=7), name="WIB")
-    md_header = f"# 🔬 Ceros Research Briefing — {datetime.now(wib).strftime('%Y-%m-%d %H:%M WIB')}\n\n"
+    today_date = datetime.now(wib).strftime("%Y-%m-%d")
+    md_header = f"# 🔬 CRN Research Briefing — {datetime.now(wib).strftime('%Y-%m-%d %H:%M WIB')}\n\n"
     md_blocks = [
         f"**Source:** [{item['url']}]({item['url']})\n\n{item['summary']}" 
         for item in aggregated_summaries
     ]
     md_body = "\n\n---\n\n".join(md_blocks)
+    full_md_content = md_header + md_body + "\n"
     
-    briefing_path.write_text(md_header + md_body + "\n", encoding="utf-8")
+    briefing_path.write_text(full_md_content, encoding="utf-8")
     logger.info("Briefing saved → %s", briefing_path)
+
+    # Vault Auto-Ingestion: Copy note to Obsidian vault /raw/ directory if configured
+    if settings.vault_raw_dir:
+        try:
+            vault_dir = Path(settings.vault_raw_dir)
+            vault_dir.mkdir(parents=True, exist_ok=True)
+            vault_note_path = vault_dir / f"crn_{ts}.md"
+            
+            frontmatter = f"---\ntags: [raw, crn, intelligence, briefing]\nsource: crn-agent\nupdated: {today_date}\n---\n\n"
+            vault_note_path.write_text(frontmatter + full_md_content, encoding="utf-8")
+            logger.info("Vault note synced → %s", vault_note_path)
+        except Exception as exc:
+            logger.warning("Failed to save vault note to %s: %s", settings.vault_raw_dir, exc)
 
     # 4. Notify (HTML for Telegram)
     # Skipped: Notifications are now sent asynchronously in the loop above to avoid hitting the 4096 char limit.

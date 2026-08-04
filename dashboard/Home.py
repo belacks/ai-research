@@ -22,7 +22,7 @@ import streamlit as st
 # Page config — must be the first Streamlit call
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Ceros Research Command Center",
+    page_title="CRN Command Center",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -304,7 +304,7 @@ def _render_header() -> None:
     st.markdown(
         """
         <div class="cmd-header">
-            <h1>🔬 Ceros Research · Command Center</h1>
+            <h1>🔬 CRN · Command Center</h1>
             <p class="subtitle">Autonomous Research Agent — Local Intelligence Node</p>
             <div style="margin-top: 0.75rem;">
                 <span class="status-pill">

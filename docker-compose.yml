@@ -34,9 +34,10 @@ services:
     container_name: claw_worker
     command: python -m app.agent.bot_handler
     volumes:
+      - ./app:/app/app
       - ./shared_workspace:/app/shared_workspace
-      - ./app/scheduler:/app/app/scheduler
       - ./targets.yaml:/app/targets.yaml:ro
+      - ${OBSIDIAN_VAULT_PATH:-./shared_workspace/vault_output}:/app/vault
     env_file:
       - .env
     extra_hosts:

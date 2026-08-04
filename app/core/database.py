@@ -125,6 +125,31 @@ def update_run_totals(run_id: int, total: int, sent: int) -> None:
     except Exception as exc:
         logger.error("Failed to update run totals for run #%d: %s", run_id, exc)
 
+def get_source_health() -> list[dict]:
+    """Aggregate crawl success rates and avg relevance per source URL."""
+    sql = """\
+        SELECT
+            url,
+            category,
+            COUNT(id)                                       AS total_attempts,
+            SUM(was_notified)                               AS successful,
+            ROUND(AVG(CASE WHEN relevance_score > 0
+                            THEN relevance_score END), 1)   AS avg_score
+        FROM briefing_items
+        GROUP BY url
+        ORDER BY
+            (CAST(SUM(was_notified) AS REAL) / COUNT(id)) ASC,
+            avg_score ASC
+    """
+    try:
+        with sqlite3.connect(_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.error("Failed to query source health: %s", exc)
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Auto-initialise on import

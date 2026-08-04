@@ -63,6 +63,19 @@ class Settings:
     # -- User Profile --
     researcher_profile: str
 
+    # -- News Sentiment Agent --
+    news_model: str
+    news_min_confidence: float
+
+    # -- Cloud LLM & Vault --
+    gemini_api_key: str
+    vault_raw_dir: str
+    obsidian_vault_dir: str
+
+    # -- Gmail BNI Parser --
+    gmail_user: str
+    gmail_app_password: str
+
 
 def _load_settings() -> Settings:
     """
@@ -83,13 +96,21 @@ def _load_settings() -> Settings:
             "RESEARCHER_PROFILE", 
             "A technology researcher interested in AI, Data Science, and global tech trends."
         ),
+        news_model=os.getenv("NEWS_MODEL", "will702/indo-roBERTa-financial-sentiment-v2"),
+        news_min_confidence=float(os.getenv("NEWS_MIN_CONFIDENCE", "0.70")),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+        vault_raw_dir=os.getenv("VAULT_RAW_DIR", "./shared_workspace/vault_output"),
+        obsidian_vault_dir=os.getenv("OBSIDIAN_VAULT_DIR", os.getenv("VAULT_RAW_DIR", "./shared_workspace/vault_output")),
+        gmail_user=os.getenv("GMAIL_USER", ""),
+        gmail_app_password=os.getenv("GMAIL_APP_PASSWORD", ""),
     )
 
     logger.info(
-        "Settings loaded  ·  model=%s  ·  ollama=%s  ·  schedule_every=%dh",
+        "Settings loaded  ·  model=%s  ·  ollama=%s  ·  schedule_every=%dh  ·  gemini=%s",
         cfg.target_model,
         cfg.ollama_base_url,
         cfg.schedule_interval_hours,
+        "CONFIGURED" if cfg.gemini_api_key else "NOT SET",
     )
     return cfg
 

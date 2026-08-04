@@ -7,3 +7,9 @@ requests
 python-telegram-bot[job-queue]
 trafilatura==1.12.0
 PyYAML==6.0.2
+numpy<2
+openpyxl
+google-genai
+reportlab
+pdfplumber
+pypdf

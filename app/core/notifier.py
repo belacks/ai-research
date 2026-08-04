@@ -45,32 +45,57 @@ def escape_html(text: str) -> str:
 
 def md_to_telegram_html(text: str) -> str:
     """
-    Convert simple Markdown from LLM output into Telegram-safe HTML.
-
+    Convert Markdown from LLM output into Telegram-safe HTML tags.
     Handles:
-      • ``**bold**`` → ``<b>bold</b>``
-      • ``* bullet`` / ``- bullet`` → ``• bullet``
-      • Escapes all remaining HTML-unsafe characters.
+      • **bold** → <b>bold</b>
+      • *italic* → <i>italic</i>
+      • # Headers → <b>Headers</b>
+      • [title](url) → <a href="url">title</a>
+      • * bullet / - bullet → • bullet
+      • `code` → <code>code</code>
     """
     import re
 
-    # First, escape HTML entities in the raw text
-    safe = html.escape(text, quote=False)
+    # 1. Preserve Markdown links before HTML escaping
+    links = []
+    def link_repl(m):
+        links.append((m.group(1), m.group(2)))
+        return f"___LINK_{len(links)-1}___"
 
-    # Convert **bold** → <b>bold</b>
+    text_with_placeholders = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', link_repl, text)
+
+    # 2. Escape HTML entities
+    safe = html.escape(text_with_placeholders, quote=False)
+
+    # 3. Headers # ## ### → <b>Header</b>
+    safe = re.sub(r'^(#{1,6})\s*(.+)$', r'<b>\2</b>', safe, flags=re.MULTILINE)
+
+    # 4. **bold** → <b>bold</b>
     safe = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', safe)
 
-    # Convert leading "* " or "- " into bullet points
+    # 5. `code` → <code>code</code>
+    safe = re.sub(r'`([^`]+)`', r'<code>\1</code>', safe)
+
+    # 6. Bullet lists
     lines = safe.split('\n')
-    result = []
+    formatted_lines = []
     for line in lines:
         stripped = line.strip()
         if stripped.startswith('* ') or stripped.startswith('- '):
-            result.append('• ' + stripped[2:])
+            formatted_lines.append('• ' + line.lstrip()[2:])
         else:
-            result.append(line)
+            formatted_lines.append(line)
+    safe = '\n'.join(formatted_lines)
 
-    return '\n'.join(result)
+    # 7. Convert single asterisk *italic* → <i>italic</i>
+    safe = re.sub(r'(?<!\*)\*([^*\n]+?)\*(?!\*)', r'<i>\1</i>', safe)
+
+    # 8. Restore links as Telegram HTML tags
+    for idx, (link_text, link_url) in enumerate(links):
+        safe_link_text = html.escape(link_text, quote=False)
+        safe = safe.replace(f"___LINK_{idx}___", f'<a href="{link_url}">{safe_link_text}</a>')
+
+    return safe
 
 
 # ---------------------------------------------------------------------------

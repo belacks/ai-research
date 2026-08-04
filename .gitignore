@@ -1,5 +1,6 @@
 # Secrets & Credentials
 .env
+**/.env
 
 # Python specific
 __pycache__/
@@ -11,11 +12,22 @@ venv/
 # Data & Execution State (The Sandbox)
 shared_workspace/
 app/scheduler/last_run.json
+app/scheduler/last_run*.Zone.Identifier
+app/finance/plugins/*
+!app/finance/plugins/.gitkeep
+!app/finance/plugins/__init__.py
 
 # OS & IDE specifics
 .DS_Store
 .vscode/
 .antigravity/
+*.Zone.Identifier
+*:Zone.Identifier
 
 keys/
 credentials/
+*.pdf
+
+dump/
+aegis-triage/
+notebooks/

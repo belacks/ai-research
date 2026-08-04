@@ -15,7 +15,7 @@ WORKDIR /app
 
 # dependencies (cached layer — only rebuilds when requirements.txt changes)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
 # configure Playwright to install browsers outside the home directory
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
